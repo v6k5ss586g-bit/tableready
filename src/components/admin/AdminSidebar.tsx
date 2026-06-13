@@ -21,7 +21,8 @@ const NAV = [
   { href: '/admin/dashboard',     label: 'דשבורד',           icon: LayoutDashboard },
   { href: '/admin/reservations',  label: 'הזמנות',            icon: CalendarDays },
   { href: '/admin/waiting-list',  label: 'רשימת המתנה',       icon: Clock },
-  { href: '/admin/customers',     label: 'לקוחות',            icon: Users },
+ { href: '/admin/floor',         label: 'מפת אולם',           icon: LayoutDashboard },
+ { href: '/admin/customers',     label: 'לקוחות',            icon: Users },
   { href: '/admin/settings',      label: 'הגדרות',            icon: Settings },
 ]
 
