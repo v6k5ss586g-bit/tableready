@@ -1,4 +1,3 @@
-// src/app/admin/dashboard/page.tsx
 import { createClient } from '@/lib/supabase/server'
 import { format } from 'date-fns'
 import { he } from 'date-fns/locale'
@@ -15,21 +14,23 @@ export default async function DashboardPage() {
   const [
     { data: todayRes },
     { data: upcomingRes },
-    { data: pending },
-    { data: waiting },
+    { data: pendingRes },
+    { data: waitingRes },
     { data: settings },
   ] = await Promise.all([
     supabase.from('reservations').select('*, customer:customers(*)').eq('date', today)
       .in('status', ['pending','approved','arrived']).order('time'),
     supabase.from('reservations').select('*, customer:customers(*)').gt('date', today)
       .in('status', ['pending','approved']).order('date').order('time').limit(10),
-    supabase.from('reservations').select('id', { count: 'exact', head: true }).eq('date', today).eq('status', 'pending'),
-    supabase.from('waiting_list').select('id', { count: 'exact', head: true }).eq('status', 'waiting'),
+    supabase.from('reservations').select('id').eq('date', today).eq('status', 'pending'),
+    supabase.from('waiting_list').select('id').eq('status', 'waiting'),
     supabase.from('restaurant_settings').select('max_seats').single(),
   ])
 
   const todayGuests = (todayRes || []).reduce((s, r) => s + (r as Reservation).party_size, 0)
   const occupancy   = settings ? Math.round((todayGuests / settings.max_seats) * 100) : 0
+  const pendingCount = pendingRes?.length || 0
+  const waitingCount = waitingRes?.length || 0
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -40,15 +41,13 @@ export default async function DashboardPage() {
         </p>
       </div>
 
-      {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard icon={CalendarDays} label="הזמנות היום" value={todayRes?.length || 0} color="text-blue-400" bg="bg-blue-400/10" />
         <StatCard icon={Users}       label="סועדים היום" value={todayGuests}            color="text-gold-400"  bg="bg-gold-400/10" />
-        <StatCard icon={AlertCircle} label="ממתינים לאישור" value={pending?.count || 0} color="text-yellow-400" bg="bg-yellow-400/10" />
-        <StatCard icon={Clock}       label="רשימת המתנה"  value={waiting?.count || 0}  color="text-purple-400" bg="bg-purple-400/10" />
+        <StatCard icon={AlertCircle} label="ממתינים לאישור" value={pendingCount} color="text-yellow-400" bg="bg-yellow-400/10" />
+        <StatCard icon={Clock}       label="רשימת המתנה"  value={waitingCount}  color="text-purple-400" bg="bg-purple-400/10" />
       </div>
 
-      {/* Occupancy */}
       <div className="card">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-white font-semibold">תפוסה היום</h2>
@@ -66,14 +65,13 @@ export default async function DashboardPage() {
         <p className="text-gray-500 text-xs mt-2">{todayGuests} / {settings?.max_seats || 0} מקומות</p>
       </div>
 
-      {/* Today's reservations */}
       <section>
         <h2 className="text-white font-semibold mb-3 flex items-center gap-2">
           <CalendarDays className="w-4 h-4 text-gold-400" />
           הזמנות היום
         </h2>
         {!todayRes?.length ? (
-          <EmptyState text="אין הזמנות להיום" />
+          <div className="card text-center py-10"><p className="text-gray-500">אין הזמנות להיום</p></div>
         ) : (
           <div className="space-y-3">
             {(todayRes as Reservation[]).map(r => (
@@ -83,13 +81,9 @@ export default async function DashboardPage() {
         )}
       </section>
 
-      {/* Upcoming */}
       {!!upcomingRes?.length && (
         <section>
-          <h2 className="text-white font-semibold mb-3 flex items-center gap-2">
-            <CalendarDays className="w-4 h-4 text-gray-400" />
-            הזמנות קרובות
-          </h2>
+          <h2 className="text-white font-semibold mb-3">הזמנות קרובות</h2>
           <div className="space-y-3">
             {(upcomingRes as Reservation[]).map(r => (
               <ReservationCard key={r.id} reservation={r} showActions={false} />
@@ -113,14 +107,6 @@ function StatCard({ icon: Icon, label, value, color, bg }: {
         <p className="text-gray-400 text-xs">{label}</p>
         <p className="text-white font-bold text-xl leading-tight">{value}</p>
       </div>
-    </div>
-  )
-}
-
-function EmptyState({ text }: { text: string }) {
-  return (
-    <div className="card text-center py-10">
-      <p className="text-gray-500">{text}</p>
     </div>
   )
 }
