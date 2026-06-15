@@ -7,7 +7,7 @@ import Link from 'next/link'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
 import { he } from 'date-fns/locale'
-import { Users, Clock, CheckCircle, XCircle, UserCheck, Ban, ChevronLeft } from 'lucide-react'
+import { Users, Clock, CheckCircle, XCircle, UserCheck, Ban, ChevronLeft, UtensilsCrossed } from 'lucide-react'
 import { cn, STATUS_LABELS, STATUS_COLORS, formatTime } from '@/lib/utils'
 import type { Reservation, ReservationStatus } from '@/types'
 
@@ -16,17 +16,25 @@ interface Props {
   showActions?: boolean
 }
 
+const ZONE_LABELS: Record<string, string> = {
+  inside:  'פנים',
+  passage: 'מעבר',
+  winter:  'סגירת חורף',
+}
+
 const ACTIONS: { status: ReservationStatus; label: string; icon: React.ElementType; className: string }[] = [
-  { status: 'approved',  label: 'אשר',      icon: CheckCircle, className: 'text-emerald-400 hover:bg-emerald-400/10 border-emerald-400/20' },
-  { status: 'arrived',   label: 'הגיע',      icon: UserCheck,   className: 'text-blue-400 hover:bg-blue-400/10 border-blue-400/20' },
-  { status: 'no_show',   label: 'לא הגיע',  icon: Ban,         className: 'text-orange-400 hover:bg-orange-400/10 border-orange-400/20' },
-  { status: 'cancelled', label: 'בטל',       icon: XCircle,     className: 'text-red-400 hover:bg-red-400/10 border-red-400/20' },
+  { status: 'approved',  label: 'אשר',     icon: CheckCircle, className: 'text-emerald-400 hover:bg-emerald-400/10 border-emerald-400/20' },
+  { status: 'arrived',   label: 'הגיע',    icon: UserCheck,   className: 'text-blue-400 hover:bg-blue-400/10 border-blue-400/20' },
+  { status: 'no_show',   label: 'לא הגיע', icon: Ban,         className: 'text-orange-400 hover:bg-orange-400/10 border-orange-400/20' },
+  { status: 'cancelled', label: 'בטל',     icon: XCircle,     className: 'text-red-400 hover:bg-red-400/10 border-red-400/20' },
 ]
 
 export default function ReservationCard({ reservation: initial, showActions = true }: Props) {
-  const router = useRouter()
+  const router   = useRouter()
   const [reservation, setReservation] = useState(initial)
   const [loading, setLoading] = useState<string | null>(null)
+
+  const table = (reservation as any).table
 
   const updateStatus = async (status: ReservationStatus) => {
     setLoading(status)
@@ -49,7 +57,7 @@ export default function ReservationCard({ reservation: initial, showActions = tr
   }
 
   const validActions = ACTIONS.filter(a => {
-    if (reservation.status === 'cancelled' || reservation.status === 'arrived' || reservation.status === 'no_show') return false
+    if (['cancelled', 'arrived', 'no_show'].includes(reservation.status)) return false
     if (a.status === 'approved' && reservation.status === 'approved') return false
     if (a.status === 'arrived' && reservation.status !== 'approved') return false
     return true
@@ -86,6 +94,14 @@ export default function ReservationCard({ reservation: initial, showActions = tr
               </a>
             )}
           </div>
+
+          {/* Table info */}
+          {table && (
+            <div className="flex items-center gap-1.5 mt-2 text-xs text-gold-400">
+              <UtensilsCrossed className="w-3.5 h-3.5" />
+              שולחן {table.number} · {table.capacity} מקומות · {ZONE_LABELS[table.zone] || table.zone}
+            </div>
+          )}
 
           {reservation.notes && (
             <p className="text-gray-500 text-xs mt-2 line-clamp-2">{reservation.notes}</p>

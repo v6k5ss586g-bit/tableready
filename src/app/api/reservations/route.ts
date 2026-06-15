@@ -173,7 +173,7 @@ export async function GET(req: NextRequest) {
 
   let query = supabase
     .from('reservations')
-    .select('*, customer:customers(*)')
+.select('*, customer:customers(*), table:tables(*)')
     .order('date', { ascending: true })
     .order('time', { ascending: true })
 
