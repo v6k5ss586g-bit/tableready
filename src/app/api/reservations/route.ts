@@ -1,3 +1,4 @@
+
 // src/app/api/reservations/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
@@ -12,27 +13,23 @@ const CreateSchema = z.object({
   notes:      z.string().optional(),
 })
 
-async function findBestTable(supabase: any, date: string, time: string, partySize: number, duration: number) {
-  // Get all tables
+async function findTables(supabase: any, date: string, time: string, partySize: number, duration: number) {
   const { data: allTables } = await supabase
     .from('tables')
     .select('*')
-    .eq('status', 'FREE')
-    .gte('capacity', partySize)
-    .order('capacity', { ascending: true })
+    .order('capacity', { ascending: false })
 
   if (!allTables?.length) return null
 
-  // Get reservations for this time window
+  // Get occupied tables for this time slot
   const { data: reservations } = await supabase
     .from('reservations')
-    .select('table_id, party_size, time, zone')
+    .select('table_id, table_ids, party_size, time')
     .eq('date', date)
     .in('status', ['pending', 'approved', 'arrived'])
 
-  // Count occupied seats per zone
+  const occupiedIds = new Set<string>()
   const zoneLoad: Record<string, number> = { inside: 0, passage: 0, winter: 0 }
-  const occupiedTables = new Set<string>()
 
   for (const r of reservations || []) {
     const [rh, rm] = r.time.split(':').map(Number)
@@ -43,30 +40,49 @@ async function findBestTable(supabase: any, date: string, time: string, partySiz
     const sEnd   = sStart + duration
 
     if (rEnd > sStart && rStart < sEnd) {
-      if (r.table_id) occupiedTables.add(r.table_id)
-      if (r.zone) zoneLoad[r.zone] = (zoneLoad[r.zone] || 0) + r.party_size
+      if (r.table_id) occupiedIds.add(r.table_id)
+      if (r.table_ids) r.table_ids.forEach((id: string) => occupiedIds.add(id))
+      const zone = allTables.find((t: any) => t.id === r.table_id)?.zone
+      if (zone) zoneLoad[zone] = (zoneLoad[zone] || 0) + r.party_size
     }
   }
 
-  // Get zone capacities
-  const zoneCapacity: Record<string, number> = { inside: 36, passage: 10, winter: 36 }
+  const freeTables = allTables.filter((t: any) => !occupiedIds.has(t.id))
 
-  // Sort zones by load percentage (least loaded first)
+  // Sort zones by load (least loaded first)
   const sortedZones = Object.entries(zoneLoad)
-    .map(([zone, load]) => ({ zone, load, pct: load / (zoneCapacity[zone] || 1) }))
-    .sort((a, b) => a.pct - b.pct)
-    .map(z => z.zone)
+    .sort((a, b) => a[1] - b[1])
+    .map(z => z[0])
 
-  // Find best table in least loaded zone
+  // Try to find single table first
   for (const zone of sortedZones) {
-    const available = allTables.filter(t => 
-      t.zone === zone && 
-      !occupiedTables.has(t.id) &&
-      t.capacity >= partySize
-    )
-    if (available.length > 0) {
-      // Pick smallest suitable table
-      return available.sort((a, b) => a.capacity - b.capacity)[0]
+    const single = freeTables
+      .filter((t: any) => t.zone === zone && t.capacity >= partySize)
+      .sort((a: any, b: any) => a.capacity - b.capacity)[0]
+    if (single) return { tables: [single], combined: false }
+  }
+
+  // Try combining 2 tables
+  for (const zone of sortedZones) {
+    const zoneFree = freeTables.filter((t: any) => t.zone === zone)
+    for (let i = 0; i < zoneFree.length; i++) {
+      for (let j = i + 1; j < zoneFree.length; j++) {
+        if (zoneFree[i].capacity + zoneFree[j].capacity >= partySize) {
+          return { tables: [zoneFree[i], zoneFree[j]], combined: true }
+        }
+      }
+    }
+  }
+
+  // Try combining across zones (passage + inside)
+  const passage = freeTables.filter((t: any) => t.zone === 'passage')
+  const inside  = freeTables.filter((t: any) => t.zone === 'inside')
+  const allFree = [...passage, ...inside]
+  for (let i = 0; i < allFree.length; i++) {
+    for (let j = i + 1; j < allFree.length; j++) {
+      if (allFree[i].capacity + allFree[j].capacity >= partySize) {
+        return { tables: [allFree[i], allFree[j]], combined: true }
+      }
     }
   }
 
@@ -90,7 +106,7 @@ export async function POST(req: NextRequest) {
 
   if (!settings) return NextResponse.json({ error: 'שגיאת מערכת' }, { status: 500 })
 
-  // Check capacity
+  // Check total capacity
   const { data: reservations } = await supabase
     .from('reservations')
     .select('time, party_size')
@@ -133,33 +149,40 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true, waiting: true })
   }
 
-  // Find best table automatically
-  const bestTable = await findBestTable(supabase, date, time, party_size, settings.reservation_duration)
+  // Find best table(s)
+  const result = await findTables(supabase, date, time, party_size, settings.reservation_duration)
+
+  const primaryTable = result?.tables[0] || null
+  const secondTable  = result?.tables[1] || null
 
   // Create reservation
   const { error: resErr } = await supabase.from('reservations').insert({
-    customer_id: customer.id,
+    customer_id:  customer.id,
     date,
     time,
     party_size,
     notes,
-    status: 'pending',
-    zone: bestTable?.zone || 'inside',
-    table_id: bestTable?.id || null,
+    status:    'pending',
+    zone:      primaryTable?.zone || 'inside',
+    table_id:  primaryTable?.id || null,
+    table_ids: result?.tables.map((t: any) => t.id) || null,
   })
 
   if (resErr) return NextResponse.json({ error: 'שגיאה ביצירת הזמנה' }, { status: 500 })
 
-  // Update table status
-  if (bestTable) {
-    await supabase.from('tables').update({ status: 'RESERVED' }).eq('id', bestTable.id)
+  // Update table statuses
+  if (primaryTable) {
+    await supabase.from('tables').update({ status: 'RESERVED' }).eq('id', primaryTable.id)
+  }
+  if (secondTable) {
+    await supabase.from('tables').update({ status: 'RESERVED' }).eq('id', secondTable.id)
   }
 
-  return NextResponse.json({ 
-    success: true, 
-    waiting: false,
-    table: bestTable ? `שולחן ${bestTable.number}` : null
-  })
+  const tableMsg = result?.combined
+    ? `שולחנות ${result.tables.map((t: any) => t.number).join(' + ')}`
+    : primaryTable ? `שולחן ${primaryTable.number}` : null
+
+  return NextResponse.json({ success: true, waiting: false, table: tableMsg })
 }
 
 export async function GET(req: NextRequest) {
@@ -173,7 +196,7 @@ export async function GET(req: NextRequest) {
 
   let query = supabase
     .from('reservations')
-.select('*, customer:customers(*), table:tables(*)')
+    .select('*, customer:customers(*), table:tables(*)')
     .order('date', { ascending: true })
     .order('time', { ascending: true })
 
